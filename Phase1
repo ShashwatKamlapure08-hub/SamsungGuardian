@@ -1,0 +1,340 @@
+import { useState, useRef, useEffect } from "react";
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from "recharts";
+
+const TABS = ["analyze","trends","coach","history","samsung"];
+
+const SAMPLE_CONVOS = [
+  {
+    label:"Gaslighting Example",
+    text:`Alex: You said you were fine with me going out.\nMe: I never said that. I said I was worried.\nAlex: You're remembering it wrong, you always do this.\nMe: I'm pretty sure I said I was uncomfortable.\nAlex: You're too sensitive, nobody else has a problem with me. You make everything into a drama.\nMe: Maybe you're right, I'm sorry.\nAlex: See, this is why I don't tell you things. You twist everything.`
+  },
+  {
+    label:"Love Bombing Example",
+    text:`Jordan: Good morning! I've been thinking about you all night.\nMe: Haha, that's sweet.\nJordan: Honestly you're unlike anyone I've ever met. I've never felt this way so fast.\nMe: We've only known each other 2 weeks.\nJordan: I know, it's crazy right? I want to be with you every second. Can we move in together?\nMe: That feels really fast.\nJordan: When it's right you know. I've already told my family about you. You're perfect.`
+  },
+  {
+    label:"Guilt-tripping Example",
+    text:`Sam: Are you coming to my show tonight?\nMe: I have to work late, I'm really sorry.\nSam: Wow. Okay.\nMe: I genuinely can't get out of it.\nSam: No, it's fine. I only invited you 3 weeks ago and practiced for months but it's fine.\nMe: Sam please don't do this.\nSam: I just thought you actually cared. My other friends are coming. But whatever.\nMe: I feel terrible.\nSam: You should.`
+  }
+];
+
+const TREND_DATA = [
+  {date:"Jan 12",stress:20,doubt:15,risk:10},
+  {date:"Jan 19",stress:30,doubt:22,risk:18},
+  {date:"Jan 26",stress:28,doubt:30,risk:25},
+  {date:"Feb 2",stress:45,doubt:38,risk:35},
+  {date:"Feb 9",stress:55,doubt:52,risk:48},
+  {date:"Feb 16",stress:62,doubt:60,risk:58},
+  {date:"Feb 23",stress:70,doubt:68,risk:72},
+];
+
+const HISTORY = [
+  {date:"Feb 23",label:"Guilt-tripping",risk:72,preview:"Sam: You should."},
+  {date:"Feb 16",label:"Gaslighting",risk:58,preview:"Alex: You're remembering it wrong..."},
+  {date:"Feb 9",label:"Love Bombing",risk:48,preview:"Jordan: Can we move in together?"},
+];
+
+const LABEL_COLOR = {
+  Gaslighting:"#E24B4A",
+  "Love Bombing":"#F09595",
+  "Guilt-tripping":"#EF9F27",
+  "Silent Treatment":"#7F77DD",
+  "Healthy":"#1D9E75",
+  "Boundary Pushing":"#D85A30",
+};
+
+const DISCLAIMER = "⚠️ Samsung Guardian is a support tool, not a clinical diagnosis. Use your own judgment and seek professional help if needed.";
+
+function Badge({label}){
+  const bg = LABEL_COLOR[label] || "#888";
+  return <span style={{background:bg+"22",color:bg,border:`1px solid ${bg}44`,borderRadius:6,padding:"2px 10px",fontSize:12,fontWeight:500}}>{label}</span>;
+}
+
+function RiskMeter({score}){
+  const color = score>65?"#E24B4A":score>40?"#EF9F27":"#1D9E75";
+  return(
+    <div style={{marginTop:8}}>
+      <div style={{display:"flex",justifyContent:"space-between",fontSize:12,color:"var(--color-text-secondary)",marginBottom:4}}>
+        <span>Risk score</span><span style={{color,fontWeight:500}}>{score}/100</span>
+      </div>
+      <div style={{height:6,borderRadius:4,background:"var(--color-background-secondary)",overflow:"hidden"}}>
+        <div style={{height:"100%",width:score+"%",background:color,borderRadius:4,transition:"width 1s ease"}}/>
+      </div>
+    </div>
+  );
+}
+
+function Spinner(){return <div style={{display:"inline-block",width:18,height:18,border:"2px solid var(--color-border-secondary)",borderTop:"2px solid var(--color-text-primary)",borderRadius:"50%",animation:"spin 0.7s linear infinite"}}/>;}
+
+export default function SamsungGuardian(){
+  const [tab,setTab]=useState("analyze");
+  const [convo,setConvo]=useState("");
+  const [loading,setLoading]=useState(false);
+  const [result,setResult]=useState(null);
+  const [error,setError]=useState("");
+  const [rawReply,setRawReply]=useState("");
+  const [coaching,setCoaching]=useState(false);
+  const [coachResult,setCoachResult]=useState(null);
+  const [coachError,setCoachError]=useState("");
+  const [savedHistory,setSavedHistory]=useState(HISTORY);
+
+  async function analyze(){
+    if(!convo.trim()){setError("Please paste a conversation first.");return;}
+    setLoading(true);setResult(null);setError("");
+    try{
+      const res=await fetch("https://api.anthropic.com/v1/messages",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          model:"claude-sonnet-4-20250514",
+          max_tokens:1000,
+          messages:[{role:"user",content:`You are Samsung Guardian, a relationship safety AI. Analyze this conversation for manipulation patterns.
+
+Return ONLY valid JSON (no markdown, no backticks):
+{
+  "label": "one of: Gaslighting | Love Bombing | Guilt-tripping | Silent Treatment | Boundary Pushing | Healthy",
+  "confidence": <number 0-100>,
+  "risk_score": <number 0-100>,
+  "explanation": "<2-3 sentence plain English explanation of what you detected>",
+  "signals": ["<signal 1>","<signal 2>","<signal 3>"],
+  "recommendation": "<1 sentence actionable advice>"
+}
+
+Conversation:
+${convo}`}]
+        })
+      });
+      const data=await res.json();
+      const text=data.content.find(b=>b.type==="text")?.text||"{}";
+      const parsed=JSON.parse(text.replace(/```json|```/g,"").trim());
+      setResult(parsed);
+      const today=new Date().toLocaleDateString("en-US",{month:"short",day:"numeric"});
+      setSavedHistory(h=>[{date:today,label:parsed.label,risk:parsed.risk_score,preview:convo.slice(0,50)+"..."},...h.slice(0,9)]);
+    }catch(e){setError("Analysis failed. Please try again.");}
+    setLoading(false);
+  }
+
+  async function getCoaching(){
+    if(!rawReply.trim()){setCoachError("Enter your reply first.");return;}
+    setCoaching(true);setCoachResult(null);setCoachError("");
+    const ctx=result?`The conversation showed: ${result.label}. ${result.explanation}`:"";
+    try{
+      const res=await fetch("https://api.anthropic.com/v1/messages",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          model:"claude-sonnet-4-20250514",
+          max_tokens:1000,
+          messages:[{role:"user",content:`You are Samsung Guardian's Reply Coach. Help rewrite this reply to be safer and boundary-reinforcing.
+
+Context: ${ctx}
+
+User's raw reply: "${rawReply}"
+
+Return ONLY valid JSON (no markdown):
+{
+  "coached_reply": "<rewritten reply that preserves the user's tone but sets clearer boundaries and avoids escalation>",
+  "boundary_reply": "<a firmer boundary-setting alternative>",
+  "why": "<1-2 sentences explaining what was changed and why>",
+  "tone_notes": "<brief note on tone preservation>"
+}`}]
+        })
+      });
+      const data=await res.json();
+      const text=data.content.find(b=>b.type==="text")?.text||"{}";
+      setCoachResult(JSON.parse(text.replace(/```json|```/g,"").trim()));
+    }catch(e){setCoachError("Coaching failed. Please try again.");}
+    setCoaching(false);
+  }
+
+  return(
+    <div style={{fontFamily:"var(--font-sans)",maxWidth:780,margin:"0 auto",padding:"0 0 40px"}}>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}} .tab-btn{background:none;border:none;padding:8px 18px;cursor:pointer;font-size:14px;color:var(--color-text-secondary);border-bottom:2px solid transparent;transition:all .2s} .tab-btn.active{color:var(--color-text-primary);border-bottom-color:var(--color-text-primary);font-weight:500} .tab-btn:hover{color:var(--color-text-primary)} .card{background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:12px;padding:20px} textarea{width:100%;border:0.5px solid var(--color-border-secondary);border-radius:8px;padding:12px;font-size:13px;font-family:var(--font-sans);color:var(--color-text-primary);background:var(--color-background-secondary);resize:vertical;box-sizing:border-box} textarea:focus{outline:none;border-color:var(--color-border-primary)} .btn-primary{background:var(--color-text-primary);color:var(--color-background-primary);border:none;border-radius:8px;padding:10px 24px;font-size:14px;font-weight:500;cursor:pointer;transition:opacity .15s} .btn-primary:hover{opacity:.85} .btn-primary:disabled{opacity:.4;cursor:not-allowed} .btn-sec{background:none;border:0.5px solid var(--color-border-secondary);border-radius:8px;padding:8px 16px;font-size:13px;cursor:pointer;color:var(--color-text-secondary);transition:background .15s} .btn-sec:hover{background:var(--color-background-secondary)} .chip{background:var(--color-background-secondary);border:0.5px solid var(--color-border-tertiary);border-radius:20px;padding:4px 12px;font-size:12px;cursor:pointer;color:var(--color-text-secondary);transition:all .15s;white-space:nowrap} .chip:hover{border-color:var(--color-border-primary);color:var(--color-text-primary)}`}</style>
+
+      {/* Header */}
+      <div style={{padding:"24px 0 0",marginBottom:4}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4}}>
+          <div style={{width:36,height:36,background:"#1428A0",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M10 2L3 6v5c0 4.2 3 8.1 7 9 4-0.9 7-4.8 7-9V6L10 2z" fill="white" opacity=".9"/><path d="M7 10l2 2 4-4" stroke="#1428A0" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          </div>
+          <div>
+            <h1 style={{margin:0,fontSize:20,fontWeight:500,letterSpacing:"-0.3px"}}>Samsung Guardian</h1>
+            <p style={{margin:0,fontSize:12,color:"var(--color-text-secondary)"}}>Relationship safety intelligence · Powered by AI</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div style={{display:"flex",borderBottom:"0.5px solid var(--color-border-tertiary)",marginBottom:24,overflowX:"auto",gap:0}}>
+        {[["analyze","Analyze"],["trends","Trends"],["coach","Reply Coach"],["history","History"],["samsung","Samsung Pitch"]].map(([k,v])=>(
+          <button key={k} className={`tab-btn${tab===k?" active":""}`} onClick={()=>setTab(k)}>{v}</button>
+        ))}
+      </div>
+
+      {/* ANALYZE */}
+      {tab==="analyze"&&(
+        <div>
+          <p style={{fontSize:13,color:"var(--color-text-secondary)",marginTop:0}}>{DISCLAIMER}</p>
+          <div style={{marginBottom:12}}>
+            <p style={{fontSize:13,color:"var(--color-text-secondary)",margin:"0 0 8px"}}>Try a sample:</p>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              {SAMPLE_CONVOS.map(s=><button key={s.label} className="chip" onClick={()=>setConvo(s.text)}>{s.label}</button>)}
+            </div>
+          </div>
+          <textarea rows={9} placeholder="Paste your conversation here. Format like:\n\nThem: message\nYou: reply\nThem: ..." value={convo} onChange={e=>setConvo(e.target.value)} style={{marginBottom:12}}/>
+          {error&&<p style={{color:"#E24B4A",fontSize:13,margin:"0 0 8px"}}>{error}</p>}
+          <button className="btn-primary" disabled={loading} onClick={analyze} style={{display:"flex",alignItems:"center",gap:8}}>
+            {loading?<><Spinner/> Analyzing…</>:<>🔍 Analyze conversation</>}
+          </button>
+
+          {result&&(
+            <div className="card" style={{marginTop:20}}>
+              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+                <Badge label={result.label}/>
+                <span style={{fontSize:13,color:"var(--color-text-secondary)"}}>Confidence: {result.confidence}%</span>
+              </div>
+              <RiskMeter score={result.risk_score}/>
+              <p style={{fontSize:14,lineHeight:1.6,margin:"14px 0 8px"}}>{result.explanation}</p>
+              <div style={{marginBottom:12}}>
+                <p style={{fontSize:12,fontWeight:500,color:"var(--color-text-secondary)",margin:"0 0 6px"}}>Detected signals</p>
+                <ul style={{margin:0,paddingLeft:18,fontSize:13,color:"var(--color-text-secondary)",lineHeight:2}}>
+                  {result.signals?.map((s,i)=><li key={i}>{s}</li>)}
+                </ul>
+              </div>
+              <div style={{background:"var(--color-background-secondary)",borderRadius:8,padding:12,fontSize:13,color:"var(--color-text-secondary)",borderLeft:"3px solid #1428A0"}}>
+                <strong style={{color:"var(--color-text-primary)"}}>Recommendation:</strong> {result.recommendation}
+              </div>
+              <button className="btn-sec" style={{marginTop:14,fontSize:13}} onClick={()=>setTab("coach")}>→ Get a safer reply coached</button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* TRENDS */}
+      {tab==="trends"&&(
+        <div>
+          <div className="card" style={{marginBottom:16}}>
+            <p style={{margin:"0 0 4px",fontWeight:500}}>Emotional trend — last 7 sessions</p>
+            <p style={{margin:"0 0 16px",fontSize:13,color:"var(--color-text-secondary)"}}>Rising scores indicate increasing manipulation signals across your conversations.</p>
+            <ResponsiveContainer width="100%" height={220}>
+              <LineChart data={TREND_DATA}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-tertiary)" vertical={false}/>
+                <XAxis dataKey="date" tick={{fontSize:11,fill:"var(--color-text-secondary)"}} axisLine={false} tickLine={false}/>
+                <YAxis domain={[0,100]} tick={{fontSize:11,fill:"var(--color-text-secondary)"}} axisLine={false} tickLine={false}/>
+                <Tooltip contentStyle={{background:"var(--color-background-primary)",border:"0.5px solid var(--color-border-secondary)",borderRadius:8,fontSize:12}}/>
+                <ReferenceLine y={60} stroke="#E24B4A" strokeDasharray="4 2" label={{value:"⚠ Alert zone",fill:"#E24B4A",fontSize:11}}/>
+                <Line dataKey="stress" stroke="#E24B4A" strokeWidth={2} dot={false} name="Stress signals"/>
+                <Line dataKey="doubt" stroke="#EF9F27" strokeWidth={2} dot={false} name="Self-doubt"/>
+                <Line dataKey="risk" stroke="#7F77DD" strokeWidth={2} dot={false} name="Risk score"/>
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12}}>
+            {[["High-risk sessions","3 of 7","#E24B4A"],["Avg risk score","47/100","#EF9F27"],["Trend","↑ Rising","#E24B4A"]].map(([l,v,c])=>(
+              <div key={l} style={{background:"var(--color-background-secondary)",borderRadius:8,padding:"14px 16px"}}>
+                <p style={{margin:"0 0 4px",fontSize:12,color:"var(--color-text-secondary)"}}>{l}</p>
+                <p style={{margin:0,fontSize:20,fontWeight:500,color:c}}>{v}</p>
+              </div>
+            ))}
+          </div>
+          <div className="card" style={{marginTop:16}}>
+            <p style={{margin:"0 0 12px",fontWeight:500,fontSize:14}}>Pattern breakdown</p>
+            {[["Gaslighting",3,"#E24B4A"],["Guilt-tripping",2,"#EF9F27"],["Love Bombing",1,"#F09595"],["Healthy",1,"#1D9E75"]].map(([l,n,c])=>(
+              <div key={l} style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+                <span style={{fontSize:12,width:110,color:"var(--color-text-secondary)"}}>{l}</span>
+                <div style={{flex:1,height:8,borderRadius:4,background:"var(--color-background-secondary)",overflow:"hidden"}}>
+                  <div style={{height:"100%",width:(n/7*100)+"%",background:c,borderRadius:4}}/>
+                </div>
+                <span style={{fontSize:12,color:"var(--color-text-secondary)",minWidth:20,textAlign:"right"}}>{n}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* COACH */}
+      {tab==="coach"&&(
+        <div>
+          <div className="card" style={{marginBottom:16}}>
+            <p style={{margin:"0 0 4px",fontWeight:500}}>Reply coach</p>
+            <p style={{margin:"0 0 14px",fontSize:13,color:"var(--color-text-secondary)"}}>Enter what you were going to say. We'll help you rewrite it to be calmer, clearer, and boundary-focused.</p>
+            {result&&<div style={{background:"var(--color-background-secondary)",borderRadius:8,padding:10,marginBottom:12,fontSize:12,color:"var(--color-text-secondary)"}}>Context from analysis: <Badge label={result.label}/></div>}
+            <textarea rows={4} placeholder="Type your raw reply here. Don't worry if it's emotional — be honest." value={rawReply} onChange={e=>setRawReply(e.target.value)} style={{marginBottom:10}}/>
+            {coachError&&<p style={{color:"#E24B4A",fontSize:13,margin:"0 0 8px"}}>{coachError}</p>}
+            <button className="btn-primary" disabled={coaching} onClick={getCoaching} style={{display:"flex",alignItems:"center",gap:8}}>
+              {coaching?<><Spinner/> Coaching…</>:<>✨ Get safer alternatives</>}
+            </button>
+          </div>
+
+          {coachResult&&(
+            <div>
+              {[["Balanced reply",coachResult.coached_reply,"#1428A0"],["Firm boundary reply",coachResult.boundary_reply,"#E24B4A"]].map(([title,text,c])=>(
+                <div key={title} className="card" style={{marginBottom:12,borderLeft:`3px solid ${c}`}}>
+                  <p style={{margin:"0 0 8px",fontSize:12,fontWeight:500,color:"var(--color-text-secondary)"}}>{title}</p>
+                  <p style={{margin:0,fontSize:14,lineHeight:1.6}}>{text}</p>
+                </div>
+              ))}
+              <div className="card" style={{background:"var(--color-background-secondary)"}}>
+                <p style={{margin:"0 0 4px",fontSize:12,fontWeight:500,color:"var(--color-text-secondary)"}}>Why we changed it</p>
+                <p style={{margin:"0 0 8px",fontSize:13,lineHeight:1.6}}>{coachResult.why}</p>
+                <p style={{margin:0,fontSize:12,color:"var(--color-text-secondary)"}}>Tone: {coachResult.tone_notes}</p>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* HISTORY */}
+      {tab==="history"&&(
+        <div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+            <p style={{margin:0,fontSize:14,color:"var(--color-text-secondary)"}}>Past analyses are stored privately on your device.</p>
+            <button className="btn-sec" style={{fontSize:12,color:"#E24B4A",borderColor:"#E24B4A44"}} onClick={()=>setSavedHistory([])}>Delete all</button>
+          </div>
+          {savedHistory.length===0?<p style={{color:"var(--color-text-secondary)",fontSize:13}}>No history yet. Run an analysis to see it here.</p>:
+          savedHistory.map((h,i)=>(
+            <div key={i} className="card" style={{marginBottom:10,cursor:"pointer"}} onClick={()=>setTab("analyze")}>
+              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:6}}>
+                <Badge label={h.label}/>
+                <span style={{fontSize:12,color:"var(--color-text-secondary)",marginLeft:"auto"}}>{h.date}</span>
+              </div>
+              <RiskMeter score={h.risk}/>
+              <p style={{margin:"8px 0 0",fontSize:12,color:"var(--color-text-secondary)",fontFamily:"var(--font-mono)"}}>{h.preview}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* SAMSUNG PITCH */}
+      {tab==="samsung"&&(
+        <div>
+          <div style={{background:"linear-gradient(135deg,#1428A0 0%,#0A1876 100%)",borderRadius:12,padding:"24px 24px 20px",color:"white",marginBottom:20}}>
+            <p style={{margin:"0 0 4px",fontSize:11,opacity:.7,letterSpacing:1,textTransform:"uppercase"}}>Samsung · One UI Integration Proposal</p>
+            <h2 style={{margin:"0 0 10px",fontSize:22,fontWeight:500}}>Guardian for Samsung Messages</h2>
+            <p style={{margin:0,fontSize:14,opacity:.85,lineHeight:1.6}}>A relationship safety intelligence layer, built natively into the Samsung ecosystem — protecting 1B+ users where they message every day.</p>
+          </div>
+
+          {[
+            {icon:"🛡️",title:"Why Samsung?",body:"Samsung Messages ships on every Galaxy device. No app install needed. Guardian can become a One UI trust feature reaching users at the moment manipulation happens — during the conversation itself."},
+            {icon:"📱",title:"Native integration surfaces",body:"Smart warning chips before you hit send · One UI Wellbeing dashboard card · Reply suggestion strip (like predictive keyboard) · On-device inference for full privacy"},
+            {icon:"🔒",title:"Privacy-first architecture",body:"Phase 1: Cloud API for prototype. Phase 2: On-device inference via Samsung Neural Processing Unit. Zero message content leaves the device in production."},
+            {icon:"🗺️",title:"Roadmap",body:"Now: Web prototype (this demo) → Q3: Android companion app with Samsung Messages export · Q4: Samsung Messages native SDK proposal · 2026: One UI feature launch"},
+            {icon:"📊",title:"Impact metrics",body:"Target: 85%+ detection precision · 40% reduction in escalating reply patterns after coaching · Pilot: 500 user beta on Galaxy S-series"},
+          ].map(({icon,title,body})=>(
+            <div key={title} className="card" style={{marginBottom:12,display:"flex",gap:14}}>
+              <span style={{fontSize:22,flexShrink:0}}>{icon}</span>
+              <div>
+                <p style={{margin:"0 0 4px",fontWeight:500,fontSize:14}}>{title}</p>
+                <p style={{margin:0,fontSize:13,color:"var(--color-text-secondary)",lineHeight:1.6}}>{body}</p>
+              </div>
+            </div>
+          ))}
+
+          <div style={{marginTop:20,padding:"16px",background:"var(--color-background-secondary)",borderRadius:10,fontSize:13,color:"var(--color-text-secondary)",lineHeight:1.6}}>
+            <strong style={{color:"var(--color-text-primary)"}}>Demo script (2 min):</strong> Paste conversation → see pattern detected → view trend chart → enter reply → get safer alternative → show Samsung integration roadmap slide.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

@@ -1,0 +1,533 @@
+import { useEffect, useMemo, useState } from "react";
+import { createClient } from "@supabase/supabase-js";
+import {
+  CartesianGrid,
+  Line,
+  LineChart,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+
+const SAMPLE_CONVOS = [
+  {
+    label: "Gaslighting Example",
+    text: `Alex: You said you were fine with me going out.\nMe: I never said that. I said I was worried.\nAlex: You're remembering it wrong, you always do this.\nMe: I'm pretty sure I said I was uncomfortable.\nAlex: You're too sensitive, nobody else has a problem with me. You make everything into a drama.\nMe: Maybe you're right, I'm sorry.\nAlex: See, this is why I don't tell you things. You twist everything.`,
+  },
+  {
+    label: "Love Bombing Example",
+    text: `Jordan: Good morning! I've been thinking about you all night.\nMe: Haha, that's sweet.\nJordan: Honestly you're unlike anyone I've ever met. I've never felt this way so fast.\nMe: We've only known each other 2 weeks.\nJordan: I know, it's crazy right? I want to be with you every second. Can we move in together?\nMe: That feels really fast.\nJordan: When it's right you know. I've already told my family about you. You're perfect.`,
+  },
+  {
+    label: "Guilt-tripping Example",
+    text: `Sam: Are you coming to my show tonight?\nMe: I have to work late, I'm really sorry.\nSam: Wow. Okay.\nMe: I genuinely can't get out of it.\nSam: No, it's fine. I only invited you 3 weeks ago and practiced for months but it's fine.\nMe: Sam please don't do this.\nSam: I just thought you actually cared. My other friends are coming. But whatever.\nMe: I feel terrible.\nSam: You should.`,
+  },
+];
+
+const LABEL_COLOR = {
+  Gaslighting: "#E24B4A",
+  "Love Bombing": "#F09595",
+  "Guilt-tripping": "#EF9F27",
+  "Silent Treatment": "#7F77DD",
+  "Boundary Pushing": "#D85A30",
+  Healthy: "#1D9E75",
+};
+
+const TABS = ["analyze", "trends", "coach", "history", "samsung"];
+const DISCLAIMER =
+  "Samsung Guardian is a support tool, not a clinical diagnosis. Use your own judgment and seek professional help if needed.";
+
+const viteEnv = typeof import.meta !== "undefined" ? import.meta.env || {} : {};
+const supabaseUrl =
+  viteEnv.VITE_SUPABASE_URL ||
+  (typeof process !== "undefined" ? process.env.REACT_APP_SUPABASE_URL : "");
+const supabaseAnonKey =
+  viteEnv.VITE_SUPABASE_ANON_KEY ||
+  (typeof process !== "undefined" ? process.env.REACT_APP_SUPABASE_ANON_KEY : "");
+
+const supabase =
+  supabaseUrl && supabaseAnonKey ? createClient(supabaseUrl, supabaseAnonKey) : null;
+const apiBase =
+  viteEnv.VITE_API_BASE_URL ||
+  (typeof process !== "undefined" ? process.env.REACT_APP_API_BASE_URL : "") ||
+  "http://localhost:8787";
+
+function Badge({ label }) {
+  const bg = LABEL_COLOR[label] || "#888";
+  return (
+    <span
+      style={{
+        background: `${bg}22`,
+        color: bg,
+        border: `1px solid ${bg}44`,
+        borderRadius: 6,
+        padding: "2px 10px",
+        fontSize: 12,
+        fontWeight: 500,
+      }}
+    >
+      {label}
+    </span>
+  );
+}
+
+function RiskMeter({ score }) {
+  const color = score > 65 ? "#E24B4A" : score > 40 ? "#EF9F27" : "#1D9E75";
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          fontSize: 12,
+          color: "var(--color-text-secondary)",
+          marginBottom: 4,
+        }}
+      >
+        <span>Risk score</span>
+        <span style={{ color, fontWeight: 500 }}>{score}/100</span>
+      </div>
+      <div
+        style={{
+          height: 6,
+          borderRadius: 4,
+          background: "var(--color-background-secondary)",
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            height: "100%",
+            width: `${score}%`,
+            background: color,
+            borderRadius: 4,
+            transition: "width 500ms ease",
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function getSnapshotFromRows(rows) {
+  const ordered = [...rows].sort(
+    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+  );
+  const lastSeven = ordered.slice(-7);
+
+  const trendData = lastSeven.map((r) => {
+    const risk = Number(r.risk_score || 0);
+    const label = r.label || "Healthy";
+    const stress = Math.min(100, Math.round(risk * 0.82 + (label === "Gaslighting" ? 10 : 0)));
+    const doubt = Math.min(
+      100,
+      Math.round(risk * 0.74 + (label === "Gaslighting" || label === "Guilt-tripping" ? 12 : 0)),
+    );
+
+    return {
+      date: new Date(r.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+      stress,
+      doubt,
+      risk,
+    };
+  });
+
+  const highRiskCount = lastSeven.filter((r) => Number(r.risk_score || 0) >= 60).length;
+  const avgRisk = lastSeven.length
+    ? Math.round(lastSeven.reduce((sum, r) => sum + Number(r.risk_score || 0), 0) / lastSeven.length)
+    : 0;
+  const trendDelta =
+    lastSeven.length > 1
+      ? Number(lastSeven[lastSeven.length - 1].risk_score || 0) - Number(lastSeven[0].risk_score || 0)
+      : 0;
+
+  const labelCounts = lastSeven.reduce((acc, r) => {
+    const label = r.label || "Healthy";
+    acc[label] = (acc[label] || 0) + 1;
+    return acc;
+  }, {});
+
+  return {
+    trendData,
+    stats: {
+      highRisk: `${highRiskCount} of ${lastSeven.length || 0}`,
+      avgRisk: `${avgRisk}/100`,
+      trend: trendDelta > 4 ? "Rising" : trendDelta < -4 ? "Improving" : "Stable",
+      trendColor: trendDelta > 4 ? "#E24B4A" : trendDelta < -4 ? "#1D9E75" : "#EF9F27",
+    },
+    patternBreakdown: Object.entries(labelCounts).sort((a, b) => b[1] - a[1]),
+    totalSessions: lastSeven.length,
+  };
+}
+
+export default function SamsungGuardianPhase2() {
+  const [session, setSession] = useState(null);
+  const [authMode, setAuthMode] = useState("signin");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authMessage, setAuthMessage] = useState("");
+  const [tab, setTab] = useState(TABS[0]);
+  const [convo, setConvo] = useState("");
+  const [result, setResult] = useState(null);
+  const [rawReply, setRawReply] = useState("");
+  const [coachResult, setCoachResult] = useState(null);
+  const [savedHistory, setSavedHistory] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [coaching, setCoaching] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!supabase) return;
+
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session || null);
+    });
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession || null);
+    });
+    return () => listener.subscription.unsubscribe();
+  }, []);
+
+  async function loadHistory() {
+    if (!supabase || !session?.user?.id) return;
+    const { data, error: dbError } = await supabase
+      .from("guardian_analyses")
+      .select("id, created_at, label, confidence, risk_score, explanation, recommendation, signals, conversation_preview")
+      .eq("user_id", session.user.id)
+      .order("created_at", { ascending: false })
+      .limit(30);
+
+    if (dbError) {
+      setError(dbError.message);
+      return;
+    }
+    setSavedHistory(data || []);
+  }
+
+  useEffect(() => {
+    if (session?.user?.id) {
+      loadHistory();
+    }
+  }, [session?.user?.id]);
+
+  const snapshot = useMemo(() => getSnapshotFromRows(savedHistory), [savedHistory]);
+
+  async function handleAuth() {
+    if (!supabase) {
+      setAuthMessage("Missing Supabase env vars. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.");
+      return;
+    }
+    if (!email || !password) {
+      setAuthMessage("Enter both email and password.");
+      return;
+    }
+    setAuthLoading(true);
+    setAuthMessage("");
+    const action =
+      authMode === "signup"
+        ? supabase.auth.signUp({ email, password })
+        : supabase.auth.signInWithPassword({ email, password });
+    const { error: authError } = await action;
+    if (authError) setAuthMessage(authError.message);
+    else if (authMode === "signup") setAuthMessage("Check your email for confirmation.");
+    setAuthLoading(false);
+  }
+
+  async function analyze() {
+    if (!convo.trim()) {
+      setError("Please paste a conversation first.");
+      return;
+    }
+    if (!session?.user?.id || !supabase) {
+      setError("Sign in first to analyze and save data.");
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+    try {
+      const response = await fetch(`${apiBase}/api/analyze`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversation: convo }),
+      });
+      if (!response.ok) {
+        throw new Error("Unable to analyze conversation right now.");
+      }
+      const parsed = await response.json();
+      setResult(parsed);
+
+      const { error: dbError } = await supabase.from("guardian_analyses").insert({
+        user_id: session.user.id,
+        label: parsed.label,
+        confidence: parsed.confidence,
+        risk_score: parsed.risk_score,
+        explanation: parsed.explanation,
+        recommendation: parsed.recommendation,
+        signals: parsed.signals,
+        conversation_preview: `${convo.slice(0, 70)}...`,
+      });
+      if (dbError) setError(dbError.message);
+      await loadHistory();
+      setLoading(false);
+    } catch (analysisError) {
+      setError(analysisError.message || "Analysis failed. Please try again.");
+      setLoading(false);
+    }
+  }
+
+  async function signOut() {
+    if (!supabase) return;
+    await supabase.auth.signOut();
+    setResult(null);
+    setSavedHistory([]);
+  }
+
+  async function getCoaching() {
+    if (!rawReply.trim()) {
+      setError("Enter your reply first.");
+      return;
+    }
+    setError("");
+    setCoaching(true);
+    try {
+      const response = await fetch(`${apiBase}/api/coach`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rawReply,
+          analysisContext: result
+            ? { label: result.label, explanation: result.explanation, risk_score: result.risk_score }
+            : null,
+        }),
+      });
+      if (!response.ok) {
+        throw new Error("Unable to coach this reply right now.");
+      }
+      setCoachResult(await response.json());
+    } catch (coachError) {
+      setError(coachError.message || "Coaching failed. Please try again.");
+    } finally {
+      setCoaching(false);
+    }
+  }
+
+  if (!supabase) {
+    return (
+      <div style={{ maxWidth: 680, margin: "40px auto", fontFamily: "var(--font-sans)" }}>
+        <h2>Samsung Guardian Phase 2</h2>
+        <p style={{ color: "var(--color-text-secondary)" }}>
+          Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` (or `REACT_APP_` equivalents) to enable auth + persistence.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ fontFamily: "var(--font-sans)", maxWidth: 780, margin: "0 auto", padding: "0 0 40px" }}>
+      <style>{`.tab-btn{background:none;border:none;padding:8px 18px;cursor:pointer;font-size:14px;color:var(--color-text-secondary);border-bottom:2px solid transparent}.tab-btn.active{color:var(--color-text-primary);border-bottom-color:var(--color-text-primary);font-weight:500}.card{background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:12px;padding:20px}textarea,input{width:100%;border:0.5px solid var(--color-border-secondary);border-radius:8px;padding:12px;font-size:13px;font-family:var(--font-sans);color:var(--color-text-primary);background:var(--color-background-secondary);box-sizing:border-box}.btn-primary{background:var(--color-text-primary);color:var(--color-background-primary);border:none;border-radius:8px;padding:10px 24px;font-size:14px;font-weight:500;cursor:pointer}.btn-sec{background:none;border:0.5px solid var(--color-border-secondary);border-radius:8px;padding:8px 16px;font-size:13px;cursor:pointer;color:var(--color-text-secondary)}.chip{background:var(--color-background-secondary);border:0.5px solid var(--color-border-tertiary);border-radius:20px;padding:4px 12px;font-size:12px;cursor:pointer;color:var(--color-text-secondary}`}</style>
+
+      <div style={{ paddingTop: 24, marginBottom: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div>
+          <h1 style={{ margin: 0, fontSize: 20, fontWeight: 500 }}>Samsung Guardian - Phase 2</h1>
+          <p style={{ margin: 0, fontSize: 12, color: "var(--color-text-secondary)" }}>
+            Supabase Auth + Postgres persistence
+          </p>
+        </div>
+        {session && <button className="btn-sec" onClick={signOut}>Sign out</button>}
+      </div>
+
+      {!session ? (
+        <div className="card" style={{ maxWidth: 460 }}>
+          <p style={{ marginTop: 0, fontWeight: 500 }}>Sign in to your private Guardian workspace</p>
+          <div style={{ display: "grid", gap: 10 }}>
+            <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" type="email" />
+            <input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" type="password" />
+            {authMessage && <p style={{ margin: 0, color: "#E24B4A", fontSize: 12 }}>{authMessage}</p>}
+            <button className="btn-primary" disabled={authLoading} onClick={handleAuth}>
+              {authLoading ? "Please wait..." : authMode === "signup" ? "Create account" : "Sign in"}
+            </button>
+            <button className="btn-sec" onClick={() => setAuthMode(authMode === "signup" ? "signin" : "signup")}>
+              {authMode === "signup" ? "Already have an account? Sign in" : "Need an account? Sign up"}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <div style={{ display: "flex", borderBottom: "0.5px solid var(--color-border-tertiary)", marginBottom: 24, overflowX: "auto" }}>
+            {TABS.map((key) => (
+              <button key={key} className={`tab-btn${tab === key ? " active" : ""}`} onClick={() => setTab(key)}>
+                {key === "analyze"
+                  ? "Analyze"
+                  : key === "trends"
+                    ? "Trends"
+                    : key === "coach"
+                      ? "Reply Coach"
+                      : key === "history"
+                        ? "History"
+                        : "Samsung Pitch"}
+              </button>
+            ))}
+          </div>
+
+          {tab === "analyze" && (
+            <div>
+              <p style={{ fontSize: 13, color: "var(--color-text-secondary)", marginTop: 0 }}>{DISCLAIMER}</p>
+              <p style={{ fontSize: 13, color: "var(--color-text-secondary)", marginBottom: 8 }}>Try a sample:</p>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+                {SAMPLE_CONVOS.map((s) => (
+                  <button key={s.label} className="chip" onClick={() => setConvo(s.text)}>
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+              <textarea
+                rows={9}
+                value={convo}
+                onChange={(e) => setConvo(e.target.value)}
+                placeholder={"Paste your conversation here.\n\nThem: ...\nYou: ..."}
+              />
+              {error && <p style={{ color: "#E24B4A", fontSize: 13 }}>{error}</p>}
+              <button className="btn-primary" disabled={loading} onClick={analyze}>
+                {loading ? "Analyzing..." : "Analyze and save"}
+              </button>
+
+              {result && (
+                <div className="card" style={{ marginTop: 20 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                    <Badge label={result.label} />
+                    <span style={{ fontSize: 13, color: "var(--color-text-secondary)" }}>
+                      Confidence: {result.confidence}%
+                    </span>
+                  </div>
+                  <RiskMeter score={result.risk_score} />
+                  <p style={{ fontSize: 14, lineHeight: 1.6, margin: "14px 0 8px" }}>{result.explanation}</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {tab === "trends" && (
+            <div>
+              <div className="card" style={{ marginBottom: 16 }}>
+                <p style={{ margin: "0 0 4px", fontWeight: 500 }}>
+                  Emotional trend - last {snapshot.totalSessions || 0} sessions
+                </p>
+                <p style={{ margin: "0 0 16px", fontSize: 13, color: "var(--color-text-secondary)" }}>
+                  Computed from your persisted analyses in Postgres.
+                </p>
+                <ResponsiveContainer width="100%" height={220}>
+                  <LineChart data={snapshot.trendData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-tertiary)" vertical={false} />
+                    <XAxis dataKey="date" tick={{ fontSize: 11, fill: "var(--color-text-secondary)" }} axisLine={false} tickLine={false} />
+                    <YAxis domain={[0, 100]} tick={{ fontSize: 11, fill: "var(--color-text-secondary)" }} axisLine={false} tickLine={false} />
+                    <Tooltip />
+                    <ReferenceLine y={60} stroke="#E24B4A" strokeDasharray="4 2" />
+                    <Line dataKey="stress" stroke="#E24B4A" strokeWidth={2} dot={false} name="Stress signals" />
+                    <Line dataKey="doubt" stroke="#EF9F27" strokeWidth={2} dot={false} name="Self-doubt" />
+                    <Line dataKey="risk" stroke="#7F77DD" strokeWidth={2} dot={false} name="Risk score" />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
+                <div style={{ background: "var(--color-background-secondary)", borderRadius: 8, padding: "14px 16px" }}>
+                  <p style={{ margin: "0 0 4px", fontSize: 12, color: "var(--color-text-secondary)" }}>High-risk sessions</p>
+                  <p style={{ margin: 0, fontSize: 20, fontWeight: 500, color: "#E24B4A" }}>{snapshot.stats.highRisk}</p>
+                </div>
+                <div style={{ background: "var(--color-background-secondary)", borderRadius: 8, padding: "14px 16px" }}>
+                  <p style={{ margin: "0 0 4px", fontSize: 12, color: "var(--color-text-secondary)" }}>Avg risk score</p>
+                  <p style={{ margin: 0, fontSize: 20, fontWeight: 500, color: "#EF9F27" }}>{snapshot.stats.avgRisk}</p>
+                </div>
+                <div style={{ background: "var(--color-background-secondary)", borderRadius: 8, padding: "14px 16px" }}>
+                  <p style={{ margin: "0 0 4px", fontSize: 12, color: "var(--color-text-secondary)" }}>Trend</p>
+                  <p style={{ margin: 0, fontSize: 20, fontWeight: 500, color: snapshot.stats.trendColor }}>{snapshot.stats.trend}</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {tab === "history" && (
+            <div>
+              {savedHistory.length === 0 ? (
+                <p style={{ color: "var(--color-text-secondary)", fontSize: 13 }}>
+                  No saved analyses yet. Run an analysis first.
+                </p>
+              ) : (
+                savedHistory.map((h) => (
+                  <div key={h.id} className="card" style={{ marginBottom: 10 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+                      <Badge label={h.label} />
+                      <span style={{ fontSize: 12, color: "var(--color-text-secondary)", marginLeft: "auto" }}>
+                        {new Date(h.created_at).toLocaleString()}
+                      </span>
+                    </div>
+                    <RiskMeter score={Number(h.risk_score || 0)} />
+                    <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--color-text-secondary)", fontFamily: "var(--font-mono)" }}>
+                      {h.conversation_preview}
+                    </p>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
+          {tab === "coach" && (
+            <div>
+              <div className="card" style={{ marginBottom: 16 }}>
+                <p style={{ margin: "0 0 4px", fontWeight: 500 }}>Reply coach</p>
+                <p style={{ margin: "0 0 14px", fontSize: 13, color: "var(--color-text-secondary)" }}>
+                  Enter your raw reply and get a safer, clearer alternative.
+                </p>
+                <textarea
+                  rows={4}
+                  placeholder="Type your raw reply here."
+                  value={rawReply}
+                  onChange={(e) => setRawReply(e.target.value)}
+                  style={{ marginBottom: 10 }}
+                />
+                <button className="btn-primary" disabled={coaching} onClick={getCoaching}>
+                  {coaching ? "Coaching..." : "Get safer alternatives"}
+                </button>
+              </div>
+
+              {coachResult && (
+                <div>
+                  <div className="card" style={{ marginBottom: 12, borderLeft: "3px solid #1428A0" }}>
+                    <p style={{ margin: "0 0 8px", fontSize: 12, fontWeight: 500, color: "var(--color-text-secondary)" }}>
+                      Balanced reply
+                    </p>
+                    <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6 }}>{coachResult.coached_reply}</p>
+                  </div>
+                  <div className="card" style={{ marginBottom: 12, borderLeft: "3px solid #E24B4A" }}>
+                    <p style={{ margin: "0 0 8px", fontSize: 12, fontWeight: 500, color: "var(--color-text-secondary)" }}>
+                      Firm boundary reply
+                    </p>
+                    <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6 }}>{coachResult.boundary_reply}</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {tab === "samsung" && (
+            <div>
+              <div style={{ background: "linear-gradient(135deg,#1428A0 0%,#0A1876 100%)", borderRadius: 12, padding: "24px 24px 20px", color: "white", marginBottom: 20 }}>
+                <p style={{ margin: "0 0 4px", fontSize: 11, opacity: 0.7, letterSpacing: 1, textTransform: "uppercase" }}>
+                  Samsung · One UI Integration Proposal
+                </p>
+                <h2 style={{ margin: "0 0 10px", fontSize: 22, fontWeight: 500 }}>Guardian for Samsung Messages</h2>
+                <p style={{ margin: 0, fontSize: 14, opacity: 0.85, lineHeight: 1.6 }}>
+                  Relationship safety intelligence built into Samsung ecosystem touchpoints.
+                </p>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
