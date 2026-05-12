@@ -1,32 +1,4 @@
----
-name: Samsung Guardian Hackathon Plan
-overview: "Build Samsung Guardian as a web-based LLM prototype in two phases: (1) hackathon solution blueprint submission and (2) full working submission with core AI features and demo readiness."
-todos:
-  - id: blueprint-story
-    content: Create final problem-solution narrative and Samsung integration framing for the blueprint submission.
-    status: pending
-  - id: blueprint-assets
-    content: Prepare pitch deck, architecture diagram, and 2-3 minute demo script with measurable impact metrics.
-    status: pending
-  - id: mvp-setup
-    content: Initialize website stack in Cursor (Next.js, Tailwind, Supabase, API routes) and scaffold core screens.
-    status: pending
-  - id: ai-core
-    content: Implement LLM-backed manipulation detection, trend extraction, and reply coach with structured JSON outputs.
-    status: pending
-  - id: persistence-visuals
-    content: Persist analyses in database and add trend/history UI with charts and loading/error states.
-    status: pending
-  - id: safety-polish
-    content: Add disclaimers, privacy controls, deletion flow, and final UX polish for judging readiness.
-    status: pending
-  - id: submission-readiness
-    content: Deploy to Vercel, run demo rehearsals, and package final full solution submission materials.
-    status: pending
-isProject: false
----
-
-# Samsung Guardian: Blueprint to Full Build
+# Samsung Guardian: 
 
 ## Goal
 Create a hackathon-ready product called **Samsung Guardian**: a web app that analyzes conversation text for manipulation patterns, tracks emotional trends over time, and offers a protective reply coach.
