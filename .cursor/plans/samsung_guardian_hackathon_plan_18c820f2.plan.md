@@ -169,13 +169,6 @@ flowchart TD
   - One UI wellbeing dashboard card
   - On-device inference for privacy
 
-## Execution Milestones
-- Day 1-2: blueprint deck + mock UI
-- Day 3-4: detection + reply coach API
-- Day 5: trend engine + charts
-- Day 6: testing + prompt tuning
-- Day 7: final polish + submission assets
-
 ## Success Criteria
 - User can analyze at least one conversation end-to-end
 - System returns clear pattern labels with explanations
